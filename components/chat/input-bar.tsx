@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
+  AudioWaveform,
+  Brain,
   FileText,
   Globe,
   Loader2,
@@ -14,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { useSettingsStore } from "@/store/settings-store";
+import { useVoiceStore } from "@/store/voice-store";
 import { transcribeAudio } from "@/lib/client";
 import { toast } from "@/store/toast-store";
 
@@ -28,9 +31,16 @@ interface Attachment {
  * mic button with real Cartesia STT + animated waveform, attachment stub (adds a
  * removable file chip; real upload is Phase 2), and a per-message
  * "Search the web" pill.
+ *
+ * variant="home" renders it inline (no sticky bottom bar) as a wide pill
+ * under the welcome heading: Think toggle, mic, and a circular accent voice
+ * button that shows while the field is empty (send replaces it once there's
+ * text).
  */
-export function InputBar() {
+export function InputBar({ variant = "chat" }: { variant?: "chat" | "home" }) {
+  const isHome = variant === "home";
   const [value, setValue] = useState("");
+  const [think, setThink] = useState(false);
   const [webSearch, setWebSearch] = useState(
     () => useSettingsStore.getState().searchByDefault
   );
@@ -43,6 +53,7 @@ export function InputBar() {
   const sendMessage = useChatStore((s) => s.sendMessage);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const searchByDefault = useSettingsStore((s) => s.searchByDefault);
+  const openVoice = useVoiceStore((s) => s.openVoice);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -126,12 +137,25 @@ export function InputBar() {
   };
 
   return (
-    <div className="pointer-events-none sticky bottom-0 z-10 px-3 pb-3 pt-2 sm:px-6 sm:pb-5">
+    <div
+      className={
+        isHome
+          ? "pointer-events-auto relative"
+          : "pointer-events-none sticky bottom-0 z-10 px-3 pb-3 pt-2 sm:px-6 sm:pb-5"
+      }
+    >
+      {!isHome && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-background via-background/85 to-transparent"
+        />
+      )}
       <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-background via-background/85 to-transparent"
-      />
-      <div className="pointer-events-auto relative mx-auto max-w-3xl">
+        className={cn(
+          "pointer-events-auto relative",
+          !isHome && "mx-auto max-w-3xl"
+        )}
+      >
         {/* Attachment chips */}
         {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
@@ -207,7 +231,9 @@ export function InputBar() {
         {/* Composer */}
         <div
           className={cn(
-            "rounded-3xl border border-border bg-card shadow-soft transition-shadow focus-within:shadow-[0_8px_40px_-12px_var(--ring)] focus-within:border-accent/40",
+            isHome
+              ? "rounded-[28px] border border-border bg-card shadow-soft transition-shadow focus-within:border-accent/40 focus-within:shadow-[0_8px_40px_-12px_var(--ring)]"
+              : "rounded-3xl border border-border bg-card shadow-soft transition-shadow focus-within:shadow-[0_8px_40px_-12px_var(--ring)] focus-within:border-accent/40",
             recording && "opacity-70"
           )}
         >
@@ -215,8 +241,8 @@ export function InputBar() {
             ref={textareaRef}
             value={value}
             rows={1}
-            placeholder="Message NovaChat…"
-            aria-label="Message NovaChat"
+            placeholder={isHome ? "Ask NovaChat" : "Message NovaChat…"}
+            aria-label={isHome ? "Ask NovaChat" : "Message NovaChat"}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -254,6 +280,25 @@ export function InputBar() {
               <span className="hidden sm:inline">Search</span>
             </button>
 
+            {/* Think toggle — visual-only reasoning mode for now */}
+            {isHome && (
+              <button
+                onClick={() => setThink((v) => !v)}
+                role="switch"
+                aria-checked={think}
+                title="Reasoning mode (visual only for now)"
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all duration-150",
+                  think
+                    ? "border-accent/50 bg-accent/15 text-accent shadow-[inset_0_0_0_1px_var(--accent)]"
+                    : "border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/40"
+                )}
+              >
+                <Brain size={13} />
+                <span>Think</span>
+              </button>
+            )}
+
             <div className="flex-1" />
 
             {/* Mic / STT */}
@@ -273,25 +318,38 @@ export function InputBar() {
               {recording ? <MicOff size={18} /> : <Mic size={18} />}
             </button>
 
-            {/* Send — circular, grey until there's text, then accent */}
-            <button
-              onClick={submit}
-              disabled={!canSend}
-              aria-label="Send message"
-              className={cn(
-                "flex h-9 w-9 items-center justify-center rounded-full transition-all duration-150",
-                canSend
-                  ? "bg-accent text-accent-foreground hover:bg-accent-hover"
-                  : "bg-muted text-muted-foreground/60"
-              )}
-            >
-              <ArrowUp size={17} strokeWidth={2.4} />
-            </button>
+            {/* Home + empty field → circular accent voice button; otherwise send */}
+            {isHome && value.trim() === "" && attachments.length === 0 ? (
+              <button
+                onClick={openVoice}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-accent-foreground transition-all duration-150 hover:bg-accent-hover"
+                aria-label="Start voice conversation"
+                title="Voice mode"
+              >
+                <AudioWaveform size={17} strokeWidth={2} />
+              </button>
+            ) : (
+              <button
+                onClick={submit}
+                disabled={!canSend}
+                aria-label="Send message"
+                className={cn(
+                  "flex h-9 w-9 items-center justify-center rounded-full transition-all duration-150",
+                  canSend
+                    ? "bg-accent text-accent-foreground hover:bg-accent-hover"
+                    : "bg-muted text-muted-foreground/60"
+                )}
+              >
+                <ArrowUp size={17} strokeWidth={2.4} />
+              </button>
+            )}
           </div>
         </div>
-        <p className="mt-2 text-center text-[10px] text-muted-foreground/70">
-          NovaChat can make mistakes — check important answers.
-        </p>
+        {!isHome && (
+          <p className="mt-2 text-center text-[10px] text-muted-foreground/70">
+            NovaChat can make mistakes — check important answers.
+          </p>
+        )}
       </div>
     </div>
   );

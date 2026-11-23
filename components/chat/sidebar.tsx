@@ -3,9 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  CalendarCheck,
   Check,
   ChevronDown,
   ChevronsRight,
+  Grid3x3,
+  Image as ImageIcon,
+  Library,
   LogOut,
   MessageSquare,
   MoreHorizontal,
@@ -14,6 +18,7 @@ import {
   PanelLeft,
   PenLine,
   Pencil,
+  Puzzle,
   Search,
   Settings,
   Sparkles,
@@ -47,7 +52,31 @@ function groupOf(c: Conversation): "Today" | "Yesterday" | "Previous 7 days" | "
   return "Older";
 }
 
-export function SidebarContent({ collapsed = false }: { collapsed?: boolean }) {
+/** Flat nav rows under New chat (ChatGPT-style; stub views for now). */
+const NAV_ITEMS = [
+  { label: "Images", icon: ImageIcon },
+  { label: "Scheduled", icon: CalendarCheck },
+  { label: "Library", icon: Library },
+  { label: "Plugins", icon: Puzzle },
+  { label: "Explore", icon: Grid3x3 },
+] as const;
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
+      {children}
+    </div>
+  );
+}
+
+export function SidebarContent({
+  collapsed = false,
+  onNav,
+}: {
+  collapsed?: boolean;
+  /** Home-view navigation: stub label, or null to return to the welcome screen. */
+  onNav?: (view: string | null) => void;
+}) {
   const conversations = useChatStore((s) => s.conversations);
   const activeId = useChatStore((s) => s.activeId);
   const selectConversation = useChatStore((s) => s.selectConversation);
@@ -90,7 +119,10 @@ export function SidebarContent({ collapsed = false }: { collapsed?: boolean }) {
     return (
       <div className="flex h-full w-[68px] flex-col items-center border-r border-border bg-sidebar py-3">
         <button
-          onClick={newChat}
+          onClick={() => {
+            onNav?.(null);
+            newChat();
+          }}
           title="New chat"
           aria-label="New chat"
           className="mb-1 flex h-11 w-11 items-center justify-center rounded-xl text-sidebar-foreground transition-colors hover:bg-black/5 dark:hover:bg-white/5"
@@ -132,46 +164,35 @@ export function SidebarContent({ collapsed = false }: { collapsed?: boolean }) {
   /* ------------------------- full sidebar -------------------------- */
   return (
     <div className="flex h-full w-[260px] flex-col bg-sidebar text-sidebar-foreground">
-      {/* Brand + collapse */}
-      <div className="flex items-center justify-between px-4 pb-2 pt-4">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-accent text-accent-foreground">
-            <Sparkles size={16} />
-          </div>
-          <div className="leading-tight">
-            <div className="text-[15px] font-semibold tracking-tight">NovaChat</div>
-            <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-              Personal AI
-            </div>
-          </div>
+      {/* Top row: wordmark + search + collapse */}
+      <div className="flex items-center justify-between gap-1 px-3 pb-1.5 pt-3.5">
+        <span className="truncate text-[15px] font-bold tracking-tight text-sidebar-foreground">
+          NovaChat
+        </span>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button
+            onClick={() => setSearchOpen((v) => !v)}
+            className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
+            title="Search chats"
+            aria-label="Search chats"
+            aria-expanded={searchOpen}
+          >
+            <Search size={16} strokeWidth={1.8} />
+          </button>
+          <button
+            onClick={toggleCollapsed}
+            className="hidden rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5 lg:block"
+            title="Close sidebar"
+            aria-label="Close sidebar"
+          >
+            <PanelLeft size={16} />
+          </button>
         </div>
-        <button
-          onClick={toggleCollapsed}
-          className="hidden rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5 lg:block"
-          title="Close sidebar"
-          aria-label="Close sidebar"
-        >
-          <PanelLeft size={17} />
-        </button>
       </div>
 
-      {/* New chat */}
-      <div className="px-3">
-        <button
-          onClick={newChat}
-          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] font-medium text-sidebar-foreground transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-        >
-          <PenLine size={16} strokeWidth={1.8} className="text-muted-foreground" />
-          New chat
-          <kbd className="ml-auto rounded-md px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/70">
-            Alt N
-          </kbd>
-        </button>
-      </div>
-
-      {/* Search — a quiet row until clicked (ChatGPT pattern) */}
-      <div className="px-2 pb-1 pt-2">
-        {searchOpen ? (
+      {/* Search — a quiet row until the search icon is clicked */}
+      {searchOpen && (
+        <div className="px-3 pb-1">
           <label className="flex items-center gap-2.5 rounded-lg bg-black/5 px-2.5 py-2 dark:bg-white/5">
             <Search size={16} strokeWidth={1.8} className="shrink-0 text-muted-foreground" />
             <input
@@ -198,27 +219,55 @@ export function SidebarContent({ collapsed = false }: { collapsed?: boolean }) {
               <X size={14} className="text-muted-foreground hover:text-foreground" />
             </button>
           </label>
-        ) : (
-          <button
-            onClick={() => setSearchOpen(true)}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] font-medium text-sidebar-foreground transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-          >
-            <Search size={16} strokeWidth={1.8} className="text-muted-foreground" />
-            Search chats
-          </button>
-        )}
+        </div>
+      )}
+
+      {/* New chat — shortcut lives in the tooltip only */}
+      <div className="px-2.5 pt-1">
+        <button
+          onClick={() => {
+            onNav?.(null);
+            newChat();
+          }}
+          title="New chat (Alt N)"
+          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] font-medium text-sidebar-foreground transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+        >
+          <PenLine size={16} strokeWidth={1.8} className="text-muted-foreground" />
+          New chat
+        </button>
       </div>
 
+      {/* Flat nav list — stub views for now */}
+      <nav className="px-2.5 pb-1" aria-label="Sections">
+        {NAV_ITEMS.map((item) => (
+          <button
+            key={item.label}
+            onClick={() => onNav?.(item.label)}
+            title={item.label}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] text-sidebar-foreground transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+          >
+            <item.icon size={16} strokeWidth={1.8} className="text-muted-foreground" />
+            {item.label}
+          </button>
+        ))}
+      </nav>
+
       {/* Conversation list */}
-      <div className="flex-1 overflow-y-auto px-2 pb-2">
+      <div className="flex-1 overflow-y-auto px-2.5 pb-2">
+        <SectionLabel>Pinned</SectionLabel>
+
+        <SectionLabel>Projects</SectionLabel>
+        <p className="px-3 py-1 text-[12.5px] text-muted-foreground">No projects</p>
+
+        <SectionLabel>Recents</SectionLabel>
         {groups.length === 0 && (
-          <p className="px-3 pt-6 text-center text-xs text-muted-foreground">
+          <p className="px-3 pt-3 text-[12.5px] text-muted-foreground">
             {query ? "No conversations match." : "No conversations yet — say hello."}
           </p>
         )}
         {groups.map(([group, items]) => (
-          <div key={group} className="pt-3">
-            <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
+          <div key={group} className="pt-1.5">
+            <div className="px-3 pb-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
               {group}
             </div>
             {items.map((c) =>
@@ -254,7 +303,10 @@ export function SidebarContent({ collapsed = false }: { collapsed?: boolean }) {
                   )}
                 >
                   <button
-                    onClick={() => selectConversation(c.id)}
+                    onClick={() => {
+                      onNav?.(null);
+                      selectConversation(c.id);
+                    }}
                     aria-current={c.id === activeId}
                     className="flex min-w-0 flex-1 items-center py-2 pl-2.5 pr-9 text-left"
                   >
@@ -300,9 +352,18 @@ export function SidebarContent({ collapsed = false }: { collapsed?: boolean }) {
         ))}
       </div>
 
-      {/* User menu */}
-      <div className="border-t border-border p-2">
+      {/* User + upgrade */}
+      <div className="px-2.5 pb-2.5 pt-1">
         <UserMenu onSettings={() => setSettingsOpen(true)} />
+        <button
+          onClick={() =>
+            toast.info("NovaChat Pro", "Billing isn't wired up yet — enjoy the free beta.")
+          }
+          className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-[12.5px] font-medium text-foreground transition-colors hover:bg-muted"
+        >
+          <Sparkles size={13} className="text-accent" />
+          Upgrade plan
+        </button>
       </div>
     </div>
   );
@@ -463,7 +524,7 @@ function UserMenu({
 }
 
 /** Mobile overlay drawer wrapper */
-export function MobileSidebar() {
+export function MobileSidebar({ onNav }: { onNav?: (view: string | null) => void }) {
   const open = useUIStore((s) => s.sidebarOpen);
   const setOpen = useUIStore((s) => s.setSidebarOpen);
 
@@ -493,7 +554,7 @@ export function MobileSidebar() {
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
             className="fixed inset-y-0 left-0 z-50 lg:hidden"
           >
-            <SidebarContent />
+            <SidebarContent onNav={onNav} />
           </motion.div>
         </>
       )}

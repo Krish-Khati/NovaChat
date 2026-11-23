@@ -1,14 +1,15 @@
 "use client";
 
-import { Compass, Code2, Newspaper, PenLine, Sparkles, type LucideIcon } from "lucide-react";
+import { Code2, Globe, PenLine, Sparkles, type LucideIcon } from "lucide-react";
 import { SUGGESTED_PROMPTS } from "@/lib/data";
 import { useChatStore } from "@/store/chat-store";
 import { useSettingsStore } from "@/store/settings-store";
+import { InputBar } from "./input-bar";
 
 const ICONS: Record<string, LucideIcon> = {
-  Compass,
+  Sparkles,
   Code2,
-  Newspaper,
+  Globe,
   PenLine,
 };
 
@@ -20,42 +21,40 @@ function greeting(): string {
   return "Good evening";
 }
 
-/** Empty state: centered mark, time-aware greeting, suggestion cards. */
+/**
+ * Home / empty state: time-aware greeting, the wide pill composer right
+ * under it (Ask NovaChat + Think + mic + voice button), then the
+ * suggestion prompts as simple icon rows.
+ */
 export function Welcome() {
   const sendMessage = useChatStore((s) => s.sendMessage);
   const searchByDefault = useSettingsStore((s) => s.searchByDefault);
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-10">
-      <div className="flex w-full max-w-2xl flex-col items-center text-center">
-        <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-accent text-accent-foreground shadow-soft">
-          <Sparkles size={28} strokeWidth={2} />
-        </div>
-        <h1 className="text-[28px] font-semibold leading-tight tracking-tight sm:text-4xl">
-          {greeting()}, Dhruv.
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
+      <div className="flex w-full max-w-[840px] flex-col">
+        <h1 className="text-center text-[28px] font-semibold leading-tight tracking-tight sm:text-4xl">
+          {greeting()}, Dhruv. What can I help with today?
         </h1>
-        <p className="mt-2 text-sm text-muted-foreground sm:text-[15px]">
-          Ask anything — NovaChat streams answers, cites the web, and speaks.
-        </p>
 
-        <div className="mt-8 grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
+        {/* Wide pill composer, directly under the heading */}
+        <div className="mt-6">
+          <InputBar variant="home" />
+        </div>
+
+        {/* Suggestion rows — icon + text, stacked, subtle hover */}
+        <div className="mt-3 flex flex-col" role="list">
           {SUGGESTED_PROMPTS.map((s) => {
-            const Icon = ICONS[s.icon] ?? Compass;
+            const Icon = ICONS[s.icon] ?? Sparkles;
             return (
               <button
                 key={s.id}
+                role="listitem"
                 onClick={() => sendMessage(s.prompt, { webSearch: searchByDefault })}
-                className="group flex flex-col items-start gap-2 rounded-2xl border border-border bg-card p-4 text-left shadow-lift transition-all duration-150 hover:-translate-y-0.5 hover:border-accent/45 hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13.5px] text-foreground transition-colors hover:bg-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-white/5"
               >
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/12 text-accent transition-colors group-hover:bg-accent group-hover:text-accent-foreground">
-                  <Icon size={16} />
-                </span>
-                <span className="text-[13.5px] font-medium leading-snug text-foreground">
-                  {s.title}
-                </span>
-                <span className="line-clamp-2 text-[11.5px] leading-snug text-muted-foreground">
-                  {s.prompt}
-                </span>
+                <Icon size={16} strokeWidth={1.8} className="shrink-0 text-muted-foreground" />
+                <span className="truncate">{s.title}</span>
               </button>
             );
           })}
@@ -64,4 +63,3 @@ export function Welcome() {
     </div>
   );
 }
-
