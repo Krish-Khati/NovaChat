@@ -67,9 +67,9 @@ export function ChatShell() {
     <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
       {/* Desktop sidebar */}
       <aside className="hidden shrink-0 lg:block" aria-label="Sidebar">
-        <SidebarContent collapsed={collapsed} />
+        <SidebarContent collapsed={collapsed} onNav={handleNav} />
       </aside>
-      <MobileSidebar />
+      <MobileSidebar onNav={handleNav} />
 
       {/* Main column */}
       <main className="flex min-w-0 flex-1 flex-col">
