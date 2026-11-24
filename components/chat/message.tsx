@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { motion } from "framer-motion";
 import {
   AlertCircle,
+  ArrowDown,
   Check,
   Copy,
   Globe,
@@ -115,6 +116,14 @@ function UserBubble({ message }: { message: MessageType }) {
   return (
     <>
       <div className="max-w-[85%] self-start whitespace-pre-wrap rounded-2xl bg-muted px-4 py-2 text-[15px] leading-relaxed text-foreground">
+        {message.imageUrl && (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={message.imageUrl}
+            alt="Attached image"
+            className="mb-2 max-h-[300px] w-full rounded-xl object-cover"
+          />
+        )}
         {message.content}
       </div>
       <div className="mt-1 flex translate-y-1 items-center gap-1 opacity-0 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100 focus-within:translate-y-0 focus-within:opacity-100">
@@ -140,12 +149,91 @@ function UserBubble({ message }: { message: MessageType }) {
 
 function AssistantBody({ message }: { message: MessageType }) {
   const regenerate = useChatStore((s) => s.regenerate);
+  const regenerateImage = useChatStore((s) => s.regenerateImage);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const speakingMessageId = useChatStore((s) => s.speakingMessageId);
   const toggleSpeak = useChatStore((s) => s.toggleSpeak);
   const stopStreaming = useChatStore((s) => s.stopStreaming);
   const [vote, setVote] = useState<"up" | "down" | null>(null);
   const speaking = speakingMessageId === message.id;
+
+  // Image-generation message: pending box → image (Download/Regenerate) or error+Retry
+  if (message.imagePrompt) {
+    return (
+      <>
+        {message.imagePending ? (
+          <div
+            role="status"
+            className="mt-1 flex h-64 w-full max-w-[512px] flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-muted/40"
+          >
+            <Loader2 size={18} className="animate-spin text-accent" />
+            <span className="bg-gradient-to-r from-muted-foreground via-foreground to-muted-foreground bg-[length:200%_100%] bg-clip-text text-transparent animate-[shimmer_1.6s_linear_infinite]">
+              Generating image…
+            </span>
+          </div>
+        ) : (
+          message.imageUrl && (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={message.imageUrl}
+              alt={message.imagePrompt}
+              className="mt-1 w-full max-w-[512px] rounded-2xl border border-border"
+            />
+          )
+        )}
+
+        {message.error && (
+          <div
+            role="alert"
+            className="mt-2 flex max-w-md flex-wrap items-center gap-2 rounded-2xl border border-[#e5484d]/40 bg-[#e5484d]/10 px-3 py-2 text-[12px] leading-snug text-[#ff8a8e]"
+          >
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <span className="min-w-0 flex-1">{message.error}</span>
+            <button
+              onClick={() => regenerateImage(message.id)}
+              disabled={isStreaming}
+              className="rounded-lg border border-[#e5484d]/40 px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-[#e5484d]/15 disabled:opacity-50"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Image actions — replaces the standard action bar */}
+        {message.status === "done" && message.imageUrl && !message.error && (
+          <div className="mt-1.5 flex translate-y-1 items-center gap-0.5 opacity-0 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100 focus-within:translate-y-0 focus-within:opacity-100">
+            <a
+              href={message.imageUrl}
+              download="nova-image.jpg"
+              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              title="Download image"
+            >
+              <ArrowDown size={14} />
+              <span>Download</span>
+            </a>
+            <button
+              onClick={() => regenerateImage(message.id)}
+              disabled={isStreaming}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+              title="Generate a new variation"
+            >
+              <RefreshCw size={14} />
+              <span>Regenerate</span>
+            </button>
+          </div>
+        )}
+
+        {message.status === "streaming" && (
+          <button
+            onClick={stopStreaming}
+            className="mt-2 inline-flex w-fit items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Square size={11} fill="currentColor" /> Stop
+          </button>
+        )}
+      </>
+    );
+  }
 
   return (
     <>

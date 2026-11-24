@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { uid } from "@/lib/id";
-import { streamChat, speakText, stopSpeakingAudio } from "@/lib/client";
+import { streamChat, streamVision, speakText, stopSpeakingAudio } from "@/lib/client";
 import { toast } from "@/store/toast-store";
 import { useSettingsStore } from "@/store/settings-store";
 import type { Conversation, Message, WebSearchPhase, Citation } from "@/lib/types";
@@ -29,7 +29,9 @@ async function runAssistantReply(
   userText: string,
   webSearch: boolean,
   set: Set,
-  get: Get
+  get: Get,
+  /** Present → vision turn: image goes to /api/vision instead of /api/chat. */
+  imageUrl?: string
 ) {
   let assistantId: string | null = null;
   let acc = "";
@@ -67,11 +69,16 @@ async function runAssistantReply(
     }));
   };
 
-  set({ isStreaming: true, webSearchPhase: webSearch ? "searching" : "thinking" });
+  set({
+    isStreaming: true,
+    webSearchPhase: imageUrl ? "thinking" : webSearch ? "searching" : "thinking",
+  });
 
   const conv = get().conversations.find((c) => c.id === convId);
+  // Vision turns carry their image on the current message only — prior turns
+  // (and any earlier image messages) pass through as plain text.
   const history = (conv?.messages ?? [])
-    .filter((m) => m.content.trim())
+    .filter((m) => m.content.trim() && (!imageUrl || !m.imageUrl))
     .map((m) => ({ role: m.role, content: m.content }))
     .slice(-24);
 
@@ -79,47 +86,102 @@ async function runAssistantReply(
   const controller = new AbortController();
   currentAbort = controller;
 
-  await streamChat(
-    { messages: history, webSearch, model },
-    {
-      onPhase: (value) => set({ webSearchPhase: value }),
-      onMeta: (meta) => {
-        ensureAssistant();
-        patchAssistant({
-          citations: meta.citations ?? [],
-          webSearched: !!meta.webSearched,
-        });
-        if (meta.warning) toast.warn("Web search skipped", meta.warning);
-      },
-      onDelta: (delta) => {
-        acc += delta;
-        ensureAssistant();
-        patchAssistant({ content: acc });
-      },
-      onError: (message) => {
-        ensureAssistant();
-        patchAssistant({ error: message, status: "done" });
-        toast.error("NovaChat hit a snag", message);
-      },
-      onDone: () => {
-        const aborted = controller.signal.aborted;
-        if (!assistantId) {
-          if (!aborted) {
-            ensureAssistant();
-            patchAssistant({
-              status: "done",
-              error: "Empty response — the model returned nothing. Try again.",
-            });
-          }
-        } else {
-          patchAssistant({ status: "done" });
-        }
-        set({ isStreaming: false, webSearchPhase: "idle" });
-        if (currentAbort === controller) currentAbort = null;
-      },
+  const handlers: Parameters<typeof streamChat>[1] = {
+    onPhase: (value) => set({ webSearchPhase: value }),
+    onMeta: (meta) => {
+      ensureAssistant();
+      patchAssistant({
+        citations: meta.citations ?? [],
+        webSearched: !!meta.webSearched,
+      });
+      if (meta.warning) toast.warn("Web search skipped", meta.warning);
     },
-    controller.signal
-  );
+    onDelta: (delta) => {
+      acc += delta;
+      ensureAssistant();
+      patchAssistant({ content: acc });
+    },
+    onError: (message) => {
+      ensureAssistant();
+      patchAssistant({ error: message, status: "done" });
+      toast.error("NovaChat hit a snag", message);
+    },
+    onDone: () => {
+      const aborted = controller.signal.aborted;
+      if (!assistantId) {
+        if (!aborted) {
+          ensureAssistant();
+          patchAssistant({
+            status: "done",
+            error: "Empty response — the model returned nothing. Try again.",
+          });
+        }
+      } else {
+        patchAssistant({ status: "done" });
+      }
+      set({ isStreaming: false, webSearchPhase: "idle" });
+      if (currentAbort === controller) currentAbort = null;
+    },
+  };
+
+  if (imageUrl) {
+    await streamVision({ prompt: userText, imageUrl, history }, handlers, controller.signal);
+  } else {
+    await streamChat({ messages: history, webSearch, model }, handlers, controller.signal);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Image generation (Pollinations via /api/image-gen)                  */
+/* ------------------------------------------------------------------ */
+
+/** Fetch a generated image URL; throws a user-facing message on failure. */
+async function fetchGeneratedImage(prompt: string, signal?: AbortSignal): Promise<string> {
+  // Random seed → each call/Regenerate is a fresh variation
+  const seed = Math.floor(Math.random() * 1_000_000);
+  const url = `/api/image-gen?prompt=${encodeURIComponent(prompt)}&seed=${seed}`;
+  const res = await fetch(url, { signal });
+  if (!res.ok) {
+    let message = `Image generation failed (HTTP ${res.status}).`;
+    try {
+      const j = await res.json();
+      if (j?.message) message = j.message;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(message);
+  }
+  return url;
+}
+
+/** Drive (or re-drive) one assistant image message: pending → image | error. */
+async function runImageGen(convId: string, assistantId: string, prompt: string, set: Set) {
+  const controller = new AbortController();
+  currentAbort = controller;
+  const patch = (p: Partial<Message>) =>
+    set((s) => ({
+      conversations: s.conversations.map((c) =>
+        c.id === convId
+          ? { ...c, messages: c.messages.map((m) => (m.id === assistantId ? { ...m, ...p } : m)) }
+          : c
+      ),
+    }));
+
+  try {
+    const url = await fetchGeneratedImage(prompt, controller.signal);
+    patch({ imageUrl: url, imagePending: false, status: "done", error: undefined });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      patch({ imagePending: false, status: "done" }); // user pressed stop — silent
+    } else {
+      const message = err instanceof Error ? err.message : String(err);
+      patch({ imagePending: false, status: "done", error: message });
+      toast.error("Image generation failed", message);
+    }
+  } finally {
+    set({ isStreaming: false, webSearchPhase: "idle" });
+    if (currentAbort === controller) currentAbort = null;
+  }
 }
 
 interface ChatState {
@@ -137,7 +199,11 @@ interface ChatState {
   deleteConversation: (id: string) => void;
   renameConversation: (id: string, title: string) => void;
 
-  sendMessage: (content: string, opts?: { webSearch?: boolean }) => void;
+  sendMessage: (content: string, opts?: { webSearch?: boolean; imageUrl?: string }) => void;
+  /** Send the prompt to /api/image-gen and render the result inline. */
+  generateImage: (prompt: string) => void;
+  /** Re-fetch an image message with a new seed (retry + Regenerate button). */
+  regenerateImage: (messageId: string) => void;
   stopStreaming: () => void;
   regenerate: () => void;
   editUserMessage: (messageId: string, newContent: string) => void;
@@ -196,7 +262,8 @@ export const useChatStore = create<ChatState>()(
 
       sendMessage: (content, opts) => {
         const text = content.trim();
-        if (!text || get().isStreaming) return;
+        const imageUrl = opts?.imageUrl;
+        if ((!text && !imageUrl) || get().isStreaming) return;
         const webSearch = opts?.webSearch ?? false;
 
         const userMessage: Message = {
@@ -205,6 +272,7 @@ export const useChatStore = create<ChatState>()(
           content: text,
           createdAt: Date.now(),
           status: "done",
+          imageUrl,
         };
 
         let convId = get().activeId;
@@ -226,7 +294,7 @@ export const useChatStore = create<ChatState>()(
           convId = uid();
           const conv: Conversation = {
             id: convId,
-            title: titleFrom(text),
+            title: titleFrom(text || "Image"),
             createdAt: Date.now(),
             updatedAt: Date.now(),
             messages: [userMessage],
@@ -234,7 +302,86 @@ export const useChatStore = create<ChatState>()(
           set((s) => ({ conversations: [conv, ...s.conversations], activeId: conv.id }));
         }
 
-        void runAssistantReply(convId!, text, webSearch, set, get);
+        void runAssistantReply(convId!, text, webSearch, set, get, imageUrl);
+      },
+
+      generateImage: (prompt) => {
+        const text = prompt.trim();
+        if (!text || get().isStreaming) return;
+
+        const userMessage: Message = {
+          id: uid(),
+          role: "user",
+          content: text,
+          createdAt: Date.now(),
+          status: "done",
+        };
+        const assistantId = uid();
+        const assistantMessage: Message = {
+          id: assistantId,
+          role: "assistant",
+          content: "",
+          createdAt: Date.now() + 1,
+          status: "streaming",
+          imagePrompt: text,
+          imagePending: true,
+        };
+
+        let convId = get().activeId;
+        const exists = convId && get().conversations.some((c) => c.id === convId);
+
+        if (exists) {
+          set((s) => ({
+            conversations: s.conversations.map((c) =>
+              c.id === convId
+                ? {
+                    ...c,
+                    messages: [...c.messages, userMessage, assistantMessage],
+                    updatedAt: Date.now(),
+                  }
+                : c
+            ),
+          }));
+        } else {
+          convId = uid();
+          const conv: Conversation = {
+            id: convId,
+            title: titleFrom(text),
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            messages: [userMessage, assistantMessage],
+          };
+          set((s) => ({ conversations: [conv, ...s.conversations], activeId: conv.id }));
+        }
+
+        set({ isStreaming: true, webSearchPhase: "thinking" });
+        void runImageGen(convId!, assistantId, text, set);
+      },
+
+      regenerateImage: (messageId) => {
+        const s = get();
+        if (s.isStreaming) return;
+        const conv = s.activeConversation();
+        const msg = conv?.messages.find((m) => m.id === messageId);
+        if (!conv || !msg?.imagePrompt) return;
+
+        set((st) => ({
+          conversations: st.conversations.map((c) =>
+            c.id === conv.id
+              ? {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === messageId
+                      ? { ...m, imagePending: true, error: undefined, imageUrl: undefined, status: "streaming" as const }
+                      : m
+                  ),
+                }
+              : c
+          ),
+          isStreaming: true,
+          webSearchPhase: "thinking",
+        }));
+        void runImageGen(conv.id, messageId, msg.imagePrompt, set);
       },
 
       stopStreaming: () => {
@@ -248,7 +395,17 @@ export const useChatStore = create<ChatState>()(
           conversations: s.conversations.map((c) => ({
             ...c,
             messages: c.messages.map((m) =>
-              m.status === "streaming" ? { ...m, status: "done" } : m
+              m.status === "streaming"
+                ? {
+                    ...m,
+                    status: "done" as const,
+                    imagePending: false,
+                    // Stopped mid-generation → surface a Retry instead of a blank hole
+                    ...(m.imagePrompt && !m.imageUrl
+                      ? { error: "Generation stopped before the image finished." }
+                      : {}),
+                  }
+                : m
             ),
           })),
         }));
@@ -275,7 +432,7 @@ export const useChatStore = create<ChatState>()(
               : c
           ),
         }));
-        void runAssistantReply(conv.id, userMessage.content, webSearch, set, get);
+        void runAssistantReply(conv.id, userMessage.content, webSearch, set, get, userMessage.imageUrl);
       },
 
       editUserMessage: (messageId, newContent) => {
@@ -304,7 +461,14 @@ export const useChatStore = create<ChatState>()(
               : c
           ),
         }));
-        void runAssistantReply(conv.id, text, false, set, get);
+        void runAssistantReply(
+          conv.id,
+          text,
+          false,
+          set,
+          get,
+          (conv.messages[idx] as Message).imageUrl
+        );
       },
 
       appendVoiceExchange: (userText, assistantText, meta) => {

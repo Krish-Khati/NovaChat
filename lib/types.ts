@@ -20,6 +20,15 @@ export interface Message {
   citations?: Citation[];
   /** Set when generation failed — render an inline error instead of crashing. */
   error?: string;
+  /**
+   * User message: attached image (downscaled data URL) the model saw.
+   * Assistant message: URL of a generated image (/api/image-gen proxy).
+   */
+  imageUrl?: string;
+  /** Prompt used for a generated image — enables regenerate/retry. */
+  imagePrompt?: string;
+  /** True while an image is being generated → render the skeleton box. */
+  imagePending?: boolean;
 }
 
 export interface Conversation {

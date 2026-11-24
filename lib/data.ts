@@ -37,6 +37,13 @@ export const CARTESIA_VOICES = [
 export const DEFAULT_MODEL = GROQ_MODELS[0].id;
 export const DEFAULT_VOICE_ID = CARTESIA_VOICES[0].id;
 
+/**
+ * Groq vision model for image understanding (verified available on this
+ * account via /v1/models + live image request — gpt-oss models are text-only).
+ * Docs: console.groq.com/docs/vision — 20MB/request, max 3 images.
+ */
+export const VISION_MODEL = "qwen/qwen3.8-27b";
+
 export const SUGGESTED_PROMPTS = [
   {
     id: "s1",

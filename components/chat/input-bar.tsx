@@ -5,8 +5,8 @@ import {
   ArrowUp,
   AudioWaveform,
   Brain,
-  FileText,
   Globe,
+  Image as ImageIcon,
   Loader2,
   Mic,
   MicOff,
@@ -18,39 +18,38 @@ import { useChatStore } from "@/store/chat-store";
 import { useSettingsStore } from "@/store/settings-store";
 import { useVoiceStore } from "@/store/voice-store";
 import { transcribeAudio } from "@/lib/client";
+import { fileToImageAttachment, type ImageAttachment } from "@/lib/image";
 import { toast } from "@/store/toast-store";
-
-interface Attachment {
-  id: string;
-  name: string;
-  sizeKb: number;
-}
 
 /**
  * Composer: autogrowing textarea (Enter = send, Shift+Enter = newline),
- * mic button with real Cartesia STT + animated waveform, attachment stub (adds a
- * removable file chip; real upload is Phase 2), and a per-message
- * "Search the web" pill.
+ * real image attach (file picker → downscaled thumbnail chip → /api/vision),
+ * mic button with real Cartesia STT + animated waveform, per-message
+ * "Search the web" pill, and an "Image" pill that flips the next message
+ * into generate mode (/api/image-gen instead of chat).
  *
  * variant="home" renders it inline (no sticky bottom bar) as a wide pill
- * under the welcome heading: Think toggle, mic, and a circular accent voice
- * button that shows while the field is empty (send replaces it once there's
- * text).
+ * under the welcome heading: Think/Image toggles, mic, and a circular
+ * accent voice button that shows while the field is empty (send replaces
+ * it once there's content).
  */
 export function InputBar({ variant = "chat" }: { variant?: "chat" | "home" }) {
   const isHome = variant === "home";
   const [value, setValue] = useState("");
   const [think, setThink] = useState(false);
+  const [genMode, setGenMode] = useState(false);
   const [webSearch, setWebSearch] = useState(
     () => useSettingsStore.getState().searchByDefault
   );
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [image, setImage] = useState<ImageAttachment | null>(null);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const sendMessage = useChatStore((s) => s.sendMessage);
+  const generateImage = useChatStore((s) => s.generateImage);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const searchByDefault = useSettingsStore((s) => s.searchByDefault);
   const openVoice = useVoiceStore((s) => s.openVoice);
@@ -68,13 +67,23 @@ export function InputBar({ variant = "chat" }: { variant?: "chat" | "home" }) {
     el.style.height = Math.min(el.scrollHeight, 220) + "px";
   }, [value]);
 
-  const canSend = (value.trim().length > 0 || attachments.length > 0) && !isStreaming;
+  const hasContent = value.trim().length > 0 || image !== null;
+  const canSend = hasContent && !isStreaming;
 
   const submit = () => {
     if (!canSend) return;
-    sendMessage(value, { webSearch });
+    if (genMode) {
+      const prompt = value.trim();
+      if (!prompt) return;
+      generateImage(prompt);
+      setValue("");
+      setGenMode(false);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+      return;
+    }
+    sendMessage(value, { webSearch, imageUrl: image?.dataUrl });
     setValue("");
-    setAttachments([]);
+    setImage(null);
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
@@ -126,16 +135,6 @@ export function InputBar({ variant = "chat" }: { variant?: "chat" | "home" }) {
     }
   };
 
-  // Attachment stub: files are UI-only chips, never uploaded (Groq Files API could wire this later)
-  const addMockAttachment = () => {
-    const samples = ["launch-brief.pdf", "q3-metrics.xlsx", "diagram.png"];
-    const name = samples[Math.floor(Math.random() * samples.length)];
-    setAttachments((a) => [
-      ...a,
-      { id: Math.random().toString(36).slice(2), name, sizeKb: 40 + Math.floor(Math.random() * 900) },
-    ]);
-  };
-
   return (
     <div
       className={
@@ -156,28 +155,47 @@ export function InputBar({ variant = "chat" }: { variant?: "chat" | "home" }) {
           !isHome && "mx-auto max-w-3xl"
         )}
       >
-        {/* Attachment chips */}
-        {attachments.length > 0 && (
+        {/* Image attachment chip */}
+        {image && (
           <div className="mb-2 flex flex-wrap gap-2">
-            {attachments.map((a) => (
-              <span
-                key={a.id}
-                className="inline-flex items-center gap-2 rounded-xl border border-border bg-card py-1.5 pl-2.5 pr-1.5 text-xs text-foreground shadow-lift"
+            <span className="inline-flex items-center gap-2 rounded-xl border border-border bg-card py-1.5 pl-2.5 pr-1.5 text-xs text-foreground shadow-lift">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={image.dataUrl}
+                alt=""
+                className="h-8 w-8 rounded-md object-cover"
+              />
+              <span className="max-w-[160px] truncate">{image.name}</span>
+              <span className="text-muted-foreground">{image.sizeKb} KB</span>
+              <button
+                onClick={() => setImage(null)}
+                className="rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label={`Remove ${image.name}`}
               >
-                <FileText size={13} className="text-accent" />
-                <span className="max-w-[160px] truncate">{a.name}</span>
-                <span className="text-muted-foreground">{a.sizeKb} KB</span>
-                <button
-                  onClick={() => setAttachments((s) => s.filter((f) => f.id !== a.id))}
-                  className="rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                  aria-label={`Remove ${a.name}`}
-                >
-                  <X size={12} />
-                </button>
-              </span>
-            ))}
+                <X size={12} />
+              </button>
+            </span>
           </div>
         )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = ""; // allow re-picking the same file
+            if (!file) return;
+            try {
+              setImage(await fileToImageAttachment(file));
+            } catch (err) {
+              toast.error(
+                "Can't attach that image",
+                err instanceof Error ? err.message : String(err)
+              );
+            }
+          }}
+        />
 
         {/* Transcribing row (STT round-trip in flight) */}
         {transcribing && (
@@ -241,8 +259,16 @@ export function InputBar({ variant = "chat" }: { variant?: "chat" | "home" }) {
             ref={textareaRef}
             value={value}
             rows={1}
-            placeholder={isHome ? "Ask NovaChat" : "Message NovaChat…"}
-            aria-label={isHome ? "Ask NovaChat" : "Message NovaChat"}
+            placeholder={
+              genMode
+                ? "Describe the image to generate"
+                : isHome
+                  ? "Ask NovaChat"
+                  : "Message NovaChat…"
+            }
+            aria-label={
+              genMode ? "Describe the image to generate" : isHome ? "Ask NovaChat" : "Message NovaChat"
+            }
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -253,14 +279,31 @@ export function InputBar({ variant = "chat" }: { variant?: "chat" | "home" }) {
             className="block max-h-[220px] w-full resize-none bg-transparent px-5 pt-4 text-[15px] leading-6 outline-none placeholder:text-muted-foreground"
           />
           <div className="flex items-center gap-1.5 px-3 pb-3 pt-1">
-            {/* Attachment (stub) — Plus on the far left, like ChatGPT */}
+            {/* Attach image — opens the real file picker */}
             <button
-              onClick={addMockAttachment}
+              onClick={() => fileRef.current?.click()}
               className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              title="Attach file (demo)"
-              aria-label="Attach file"
+              title="Attach an image"
+              aria-label="Attach an image"
             >
               <Plus size={19} strokeWidth={2} />
+            </button>
+
+            {/* Image generate mode pill */}
+            <button
+              onClick={() => setGenMode((v) => !v)}
+              role="switch"
+              aria-checked={genMode}
+              title="Generate an image from your description instead of chatting"
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all duration-150",
+                genMode
+                  ? "border-accent/50 bg-accent/15 text-accent shadow-[inset_0_0_0_1px_var(--accent)]"
+                  : "border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/40"
+              )}
+            >
+              <ImageIcon size={13} />
+              <span className="hidden sm:inline">Image</span>
             </button>
 
             {/* Web search per-message pill */}
@@ -319,7 +362,7 @@ export function InputBar({ variant = "chat" }: { variant?: "chat" | "home" }) {
             </button>
 
             {/* Home + empty field → circular accent voice button; otherwise send */}
-            {isHome && value.trim() === "" && attachments.length === 0 ? (
+            {isHome && value.trim() === "" && image === null ? (
               <button
                 onClick={openVoice}
                 className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-accent-foreground transition-all duration-150 hover:bg-accent-hover"

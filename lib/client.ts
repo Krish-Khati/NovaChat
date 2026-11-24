@@ -53,12 +53,38 @@ export async function streamChat(
   signal?: AbortSignal
 ): Promise<void> {
   const keys = getClientKeys();
+  return streamSSE("/api/chat", { ...request, ...keys }, handlers, signal);
+}
+
+export interface VisionRequest {
+  prompt?: string;
+  imageUrl: string; // base64 data URL
+  history?: { role: "user" | "assistant"; content: string }[];
+}
+
+/** Stream a vision completion (image + prompt) via /api/vision. */
+export async function streamVision(
+  request: VisionRequest,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal
+): Promise<void> {
+  const keys = getClientKeys();
+  return streamSSE("/api/vision", { ...request, ...keys }, handlers, signal);
+}
+
+/** Shared POST → SSE reader for /api/chat and /api/vision (identical wire format). */
+async function streamSSE(
+  url: string,
+  payload: unknown,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal
+): Promise<void> {
   let res: Response;
   try {
-    res = await fetch("/api/chat", {
+    res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...request, ...keys }),
+      body: JSON.stringify(payload),
       signal,
     });
   } catch (err) {
@@ -72,7 +98,7 @@ export async function streamChat(
   }
 
   if (!res.ok || !res.body) {
-    let message = `Chat failed (HTTP ${res.status}).`;
+    let message = `Request failed (HTTP ${res.status}).`;
     try {
       const j = await res.json();
       if (j?.message) message = j.message;
